@@ -7,7 +7,7 @@ on:
 # 빌드 & 푸시 단계
 # 1. github repository에서 코드를 가져옴
 # 2. Docker Hub에 로그인을함
-# 2-1. github secrets에 저장된 DOCKER_USERNAME, DOCKER_TOKEN을 사용
+# 2-1. github secrets에 저장된 DOCKER_USERNAME, DOCKER_TOKEN을 사용1
 # 3. Docker 이미지 빌드 및 푸시
 # 3-1. 새로운 이미지가 만들어지면, blue와 동일한 환경에 새로 올림
 

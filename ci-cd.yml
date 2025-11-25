@@ -1,0 +1,107 @@
+#main 브랜치에 push 될 때 자동 실행 됨
+on:
+  push:
+    branches:
+      - main
+
+# 빌드 & 푸시 단계
+# 1. github repository에서 코드를 가져옴
+# 2. Docker Hub에 로그인을함
+# 2-1. github secrets에 저장된 DOCKER_USERNAME, DOCKER_TOKEN을 사용
+# 3. Docker 이미지 빌드 및 푸시
+# 3-1. 새로운 이미지가 만들어지면, blue와 동일한 환경에 새로 올림
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Docker Hub Login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build and Push Image
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/express-healthcheck:latest .
+          docker push ${{ secrets.DOCKER_USERNAME }}/express-healthcheck:latest
+
+    deploy:
+      needs: build-and-push
+      runs-on: ubuntu-latest
+      steps:
+        # github action에서 ec2로 ssh접속하기위한 설정
+        # 600은 주인만 읽기 쓰기 가능하고 그룹 다른 사람은 아무것도 못하는 권한 코드
+        # ssh키는 다른 사용자가 읽을 수 있으면 보안 위협이 발생하기 때문
+        - name: Set up SSH
+          run: |
+            mkdir -p ~/.ssh
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+            chmod 600 ~/.ssh/id_rsa
+            ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+        # 배포 폴더로 이동 /bluegreen으로 이동하게됨
+        # 현재 실행 중인 컨테이너를 확인함
+        # Blue 컨테이너 실행 중이면 green을 배포(green 타겟으로 설정)
+        # Green 컨테이너 실행 중이면 Blue 배포(Blue 타겟으로 설정)
+        # 둘다 컨테이너 놀고 있으면 첫 배포니까 blue배포
+        # 선택된 target으로 컨테이너 최신 이미지 pull
+        # 새 버전 이미지를 docker hub에서 pull하고
+        # 새 버전 컨테이너를 실행
+        # 헬스 체크를 통해서 새 버전이 살아있는지 확인하는 과정을 거침
+        # 성공시 다음 단게로 넘어가게됨 실패 시 롤백 후 새 버전은 종료됨 전환이 일어나지 않음
+        # 트래픽 전환 과정 nginx.conf안에서 전환이 이루어지고 nginx-proxy 컨테이너가 재가동 되면서 외부 트래픽이 새로운 타겟 컨테이너로 바뀜
+        # sed가 nginx.conf에서 타겟으로 설정된걸로 문자열을 교체함
+        # 기존 버전 종료
+        - name: Deploy to EC2
+          run: |
+            ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash -s' <<EOF
+            set -e
+          
+            cd /home/${{ secrets.SERVER_USER }}/bluegreen 
+            if docker ps | grep express-healthcheck-blue; then
+              TARGET=green
+              STOP=express-healthcheck-blue
+            elif docker ps | grep express-healthcheck-green; then
+              TARGET=blue
+              STOP=express-healthcheck-green
+            else
+              TARGET=blue
+              STOP=none
+            fi
+
+            echo "Deploying to: \$TARGET"
+            docker compose pull express-healthcheck-\$TARGET
+            docker compose up -d express-healthcheck-\$TARGET
+
+            if [ "\$STOP" != "none" ]; then
+              echo "Running health check..."
+              for i in {1..10}; do
+                sleep 2
+                if docker exec express-healthcheck-\$TARGET curl -s http://localhost:3000/health; then
+                  echo "Health check passed"
+                  break
+                elif [ \$i -eq 10 ]; then
+                  echo "Health check failed. Rolling back..."
+                  docker stop express-healthcheck-\$TARGET
+                  docker compose restart \$STOP
+                  exit 1
+                fi
+              done
+            else
+              echo "First deploy — skipping health check"
+            fi
+
+            echo "Switching Nginx to \$TARGET"
+
+            sed -i "s/express-healthcheck-[a-z]\\+/express-healthcheck-\$TARGET/g" nginx.conf
+            docker stop nginx-proxy || true
+            docker rm -f nginx-proxy || true
+            docker compose up -d nginx-proxy
+
+            if [ "\$STOP" != "none" ]; then
+              docker stop \$STOP || true
+            fi
+            EOF

@@ -34,7 +34,7 @@ jobs:
       steps:
         # github action에서 ec2로 ssh접속하기위한 설정
         # 600은 주인만 읽기 쓰기 가능하고 그룹 다른 사람은 아무것도 못하는 권한 코드
-        # ssh키는 다른 사용자가 읽을 수 있으면 보안 위협이 발생하기 때문
+        # ssh키는 다른 사용자가 읽을 수 있으면 보안 위협이 발생하기 때문1
         - name: Set up SSH
           run: |
             mkdir -p ~/.ssh

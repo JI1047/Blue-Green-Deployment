@@ -105,3 +105,32 @@ jobs:
             docker stop \$STOP || true
           fi
           EOF
+      # 🚨 배포 실패하면 디스코드로 알림 보내기
+      - name: Discord Notify (Failure)
+        if: failure()
+        run: |
+          curl -H "Content-Type: application/json" \
+          -d "{
+                \"content\": \"🚨 **Blue/Green 배포 실패! 롤백 완료**\",
+                \"embeds\": [{
+                  \"title\": \"배포 실패 보고\",
+                  \"description\": \"Repository: $GITHUB_REPOSITORY\nCommit: $GITHUB_SHA\nAuthor: $GITHUB_ACTOR\",
+                  \"color\": 16711680
+                }]
+              }" \
+          ${{ secrets.DISCORD_WEBHOOK }}
+
+      - name: Discord Notify (Success)
+        if: success()
+        run: |
+          curl -H "Content-Type: application/json" \
+          -d "{
+                \"content\": \"✅ **Blue/Green 배포 성공!**\",
+                \"embeds\": [{
+                  \"title\": \"배포 완료 보고\",
+                  \"description\": \"Repository: $GITHUB_REPOSITORY\nCommit: $GITHUB_SHA\nAuthor: $GITHUB_ACTOR\",
+                  \"color\": 3066993
+                }]
+              }" \
+          ${{ secrets.DISCORD_WEBHOOK }}
+
